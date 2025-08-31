@@ -1,0 +1,5 @@
+Image placeholder for prompt: Create a visual representation of: ## Verification of the Claim: "Earth is further away from the Sun than Mars."
+
+The claim that "Earth...
+Generated at: 2025-08-31 23:19:50
+Note: Actual image generation requires Imagen API access
