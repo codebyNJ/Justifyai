@@ -41,7 +41,7 @@ Thumbs.db
 # Logs
 *.log
 logs/
-
+!requirements.txt
 # Output files
 outputs/
 *.json
