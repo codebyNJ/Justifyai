@@ -1,0 +1,17 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.env
+.venv
+venv/
+ENV/
+env/
+.DS_Store
+.git/
+.github/
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/

@@ -237,8 +237,6 @@ htmlcov/
 
 # Google Cloud specific
 *.json
-!application_default_credentials.json
-!service-account-key.json
 !requirements.txt
 !pyproject.toml
 !poetry.lock

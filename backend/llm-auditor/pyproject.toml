@@ -1,26 +1,26 @@
-[project]
+[tool.poetry]
 name = "llm-auditor"
 version = "0.1.0"
 description = "The LLM Auditor evaluates LLM-generated answers, verifies actual accuracy using the web, and refines the response to ensure alignment with real-world knowledge."
 authors = [
-    { name = "Chun-Sung Ferng", email = "csferng@google.com" },
-    { name = "Cyrus Rashtchian", email = "cyroid@google.com" },
-    { name = "Da-Cheng Juan", email = "dacheng@google.com" },
-    { name = "Ivan Kuznetsov", email = "ivanku@google.com" },
+    "Chun-Sung Ferng <csferng@google.com>",
+    "Cyrus Rashtchian <cyroid@google.com>",
+    "Da-Cheng Juan <dacheng@google.com>",
+    "Ivan Kuznetsov <ivanku@google.com>"
 ]
 license = "Apache License 2.0"
 readme = "README.md"
+packages = [{include = "llm_auditor"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
 google-adk = "^1.0.0"
-google-cloud-aiplatform = { extras = [
-    "adk",
-    "agent-engines",
-], version = "^1.93.0" }
+google-cloud-aiplatform = { extras = ["adk", "agent-engines"], version = "^1.93.0" }
 google-genai = "^1.9.0"
 pydantic = "^2.10.6"
 python-dotenv = "^1.0.1"
+fastapi = "^0.115.0"   # bumped
+uvicorn = "^0.34.0"    # bumped
 
 [tool.poetry.group.dev]
 optional = true
