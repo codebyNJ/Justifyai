@@ -236,7 +236,6 @@ $RECYCLE.BIN/
 htmlcov/
 
 # Google Cloud specific
-service-account-key.json
 *.json
 !requirements.txt
 !pyproject.toml
