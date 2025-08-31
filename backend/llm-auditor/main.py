@@ -27,7 +27,7 @@ def initialize_vertex_ai():
     
     try:
         # Check if we have Google credentials in environment variable
-        google_credentials = os.getenv("GOOGLE_CREDENTIALS")
+        google_credentials = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
         
         if not google_credentials:
             print("❌ GOOGLE_CREDENTIALS environment variable not found")
