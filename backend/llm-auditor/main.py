@@ -4,6 +4,13 @@ from pydantic import BaseModel
 from vertexai import agent_engines
 import vertexai
 import os
+import requests
+import json
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="LLM Auditor API", version="1.0.0")
 
@@ -27,10 +34,12 @@ except Exception as e:
 class QueryRequest(BaseModel):
     message: str
     user_id: str = "default_user"
+    generate_image: bool = True
 
 class QueryResponse(BaseModel):
     response: str
     session_id: str
+    justifyai_response: dict = None
 
 user_sessions = {}
 
@@ -49,9 +58,67 @@ def get_agent_engine():
     except Exception as e:
         return None, str(e)
 
+async def send_to_justifyai(response: str, session_id: str, generate_image: bool = True) -> dict:
+    """
+    Send the LLM Auditor response to JustifyAI API for processing
+    
+    Args:
+        response: The response from LLM Auditor
+        session_id: The session ID
+        generate_image: Whether to generate images
+        
+    Returns:
+        JustifyAI API response
+    """
+    try:
+        justifyai_url = "https://justifyai.onrender.com/process"
+        
+        payload = {
+            "api_output": {
+                "response": response,
+                "session_id": session_id
+            },
+            "generate_image": generate_image
+        }
+        
+        headers = {"Content-Type": "application/json"}
+        
+        logger.info(f"Sending response to JustifyAI API: {justifyai_url}")
+        logger.info(f"Payload: {json.dumps(payload, indent=2)}")
+        
+        # Send request to JustifyAI API
+        justifyai_response = requests.post(
+            justifyai_url,
+            json=payload,
+            headers=headers,
+            timeout=60  # Increased timeout for image generation
+        )
+        
+        if justifyai_response.status_code == 200:
+            result = justifyai_response.json()
+            logger.info("Successfully received response from JustifyAI API")
+            return result
+        else:
+            logger.error(f"JustifyAI API returned error: {justifyai_response.status_code}")
+            logger.error(f"Error details: {justifyai_response.text}")
+            return {
+                "error": f"JustifyAI API error: {justifyai_response.status_code}",
+                "details": justifyai_response.text
+            }
+            
+    except requests.exceptions.Timeout:
+        logger.error("Timeout while calling JustifyAI API")
+        return {"error": "Timeout while calling JustifyAI API"}
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request error while calling JustifyAI API: {e}")
+        return {"error": f"Request error: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Unexpected error while calling JustifyAI API: {e}")
+        return {"error": f"Unexpected error: {str(e)}"}
+
 @app.post("/query", response_model=QueryResponse)
 async def query_agent(request: QueryRequest):
-    """Query your deployed Reasoning Engine agent"""
+    """Query your deployed Reasoning Engine agent and send to JustifyAI"""
     try:
         # Get agent engine with error handling
         agent_engine, error = get_agent_engine()
@@ -78,9 +145,20 @@ async def query_agent(request: QueryRequest):
             for part in event["content"]["parts"]:
                 responses.append(part["text"])
         
+        # Combine all responses
+        combined_response = " ".join(responses)
+        
+        # Send to JustifyAI API
+        justifyai_response = await send_to_justifyai(
+            response=combined_response,
+            session_id=session_id,
+            generate_image=request.generate_image
+        )
+        
         return QueryResponse(
-            response=" ".join(responses),
-            session_id=session_id
+            response=combined_response,
+            session_id=session_id,
+            justifyai_response=justifyai_response
         )
     except HTTPException:
         # Re-raise HTTP exceptions
@@ -118,7 +196,11 @@ async def root():
         "message": "LLM Auditor API is running on Cloud Run 🚀", 
         "docs": "/docs",
         "health_check": "/health",
-        "status": "Container started successfully"
+        "status": "Container started successfully",
+        "features": [
+            "LLM Auditor processing",
+            "JustifyAI integration for content formatting and image generation"
+        ]
     }
 
 if __name__ == "__main__":
