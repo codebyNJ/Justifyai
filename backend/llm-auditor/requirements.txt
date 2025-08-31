@@ -1,0 +1,15 @@
+# LLM Auditor Dependencies
+# Core dependencies
+google-adk
+google-cloud-aiplatform[adk,agent-engines]
+google-genai
+pydantic
+python-dotenv
+vertexai
+# Development dependencies
+pytest
+pytest-asyncio
+
+# Deployment dependencies
+absl-py
+
