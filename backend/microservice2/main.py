@@ -32,48 +32,14 @@ app.add_middleware(
 # Configuration constants
 GEMINI_TIMEOUT = 120  # 2 minutes timeout for Gemini API calls
 IMAGE_TIMEOUT = 60  # 1 minute timeout specifically for image generation
-MAX_RETRIES = 3
+MAX_RETRIES = 1
 RETRY_DELAY = 2  # seconds
-BACKOFF_MULTIPLIER = 2  # exponential backoff
 
 # Fast image generation models (ordered by speed)
 FAST_IMAGE_MODELS = [
-    "gemini-1.5-flash",  # Fastest, good for simple images
-    "gemini-1.5-pro",    # Balanced speed/quality
-    "gemini-2.0-flash-exp",  # Experimental but fast
+      # Experimental but fast
     "gemini-2.5-flash-image-preview"  # Fallback to original
 ]
-
-def retry_on_server_error(max_retries=MAX_RETRIES, base_delay=RETRY_DELAY):
-    """
-    Decorator to retry functions on server errors (502, 503, 504, etc.)
-    """
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            last_exception = None
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    last_exception = e
-                    error_msg = str(e).lower()
-                    
-                    # Check if it's a server error that we should retry
-                    if any(code in error_msg for code in ['502', '503', '504', '500', 'server error', 'bad gateway']):
-                        if attempt < max_retries - 1:
-                            delay = base_delay * (BACKOFF_MULTIPLIER ** attempt)
-                            logger.warning(f"Server error on attempt {attempt + 1}/{max_retries}, retrying in {delay}s: {e}")
-                            time.sleep(delay)
-                            continue
-                    
-                    # For non-server errors or max retries reached, don't retry
-                    break
-            
-            # If we get here, all retries failed
-            logger.error(f"All {max_retries} attempts failed. Last error: {last_exception}")
-            raise last_exception
-        return wrapper
-    return decorator
 
 # Pydantic models
 class APIOutput(BaseModel):
@@ -132,7 +98,6 @@ class GeminiProcessor:
         
         return unique_urls
         
-    @retry_on_server_error()
     def generate_formatted_content(self, content: str, style: str = "detailed") -> str:
         """
         Generate formatted content using Gemini API
@@ -271,7 +236,6 @@ class GeminiProcessor:
                 "error": str(e)
             }]
 
-    @retry_on_server_error()
     def generate_image_fast(self, prompt: str, num_images: int = 1) -> List[Dict[str, str]]:
         """
         Generate images using faster Gemini models with fallback system
@@ -453,8 +417,7 @@ async def root():
         "endpoints": {
             "/process": "POST - Process API output with Gemini (generates 1 image)",
             "/generate-image-fast": "POST - Fast single image generation only",
-            "/health": "GET - Health check",
-            "/health/gemini": "GET - Gemini API health check"
+            "/health": "GET - Health check"
         },
         "image_config": {
             "images_per_request": 1,
@@ -467,42 +430,6 @@ async def root():
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": time.time()}
-
-@app.get("/health/gemini")
-async def gemini_health_check():
-    """Health check endpoint that tests Gemini API connection"""
-    try:
-        # Test a simple Gemini API call
-        test_response = processor.client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=["Hello, this is a health check"],
-            timeout=30
-        )
-        
-        return {
-            "status": "healthy",
-            "gemini_api": "connected",
-            "timestamp": time.time(),
-            "test_response": test_response.candidates[0].content.parts[0].text[:50] + "..."
-        }
-    except Exception as e:
-        error_msg = str(e).lower()
-        if any(code in error_msg for code in ['502', '503', '504', '500', 'server error', 'bad gateway']):
-            return {
-                "status": "unhealthy",
-                "gemini_api": "server_error",
-                "error": str(e),
-                "timestamp": time.time(),
-                "recommendation": "Gemini API is experiencing server issues. This is a temporary problem."
-            }
-        else:
-            return {
-                "status": "unhealthy",
-                "gemini_api": "connection_error",
-                "error": str(e),
-                "timestamp": time.time(),
-                "recommendation": "Check your API key and network connection."
-            }
 
 @app.post("/process", response_model=ProcessingResponse)
 async def process_api_output(request: ProcessingRequest):
