@@ -262,8 +262,7 @@ class GeminiProcessor:
                         # Generate image with faster timeout
                         response = self.client.models.generate_content(
                             model=model_name,
-                            contents=[prompt],
-                            timeout=IMAGE_TIMEOUT
+                            contents=[prompt]
                         )
                         
                         # Extract image data
