@@ -29,6 +29,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Configuration constants
+GEMINI_TIMEOUT = 120  # 2 minutes timeout for Gemini API calls
+IMAGE_TIMEOUT = 60  # 1 minute timeout specifically for image generation
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # seconds
+
+# Fast image generation models (ordered by speed)
+FAST_IMAGE_MODELS = [
+    "gemini-1.5-flash",  # Fastest, good for simple images
+    "gemini-1.5-pro",    # Balanced speed/quality
+    "gemini-2.0-flash-exp",  # Experimental but fast
+    "gemini-2.5-flash-image-preview"  # Fallback to original
+]
+
 # Pydantic models
 class APIOutput(BaseModel):
     response: str
@@ -223,6 +237,109 @@ class GeminiProcessor:
                 "prompt": prompt,
                 "error": str(e)
             }]
+
+    def generate_image_fast(self, prompt: str, num_images: int = 1) -> List[Dict[str, str]]:
+        """
+        Generate images using faster Gemini models with fallback system
+        
+        Args:
+            prompt: Text description for image generation
+            num_images: Number of images to generate
+            
+        Returns:
+            List of dictionaries containing image data and metadata
+        """
+        try:
+            logger.info(f"Generating {num_images} image(s) with fast models, prompt: {prompt}")
+            
+            image_data_list = []
+            for i in range(num_images):
+                image_generated = False
+                
+                # Try each model in order of speed
+                for model_index, model_name in enumerate(FAST_IMAGE_MODELS):
+                    try:
+                        logger.info(f"Trying model {model_name} for image {i+1}/{num_images}...")
+                        
+                        # Generate image with faster timeout
+                        response = self.client.models.generate_content(
+                            model=model_name,
+                            contents=[prompt],
+                            timeout=IMAGE_TIMEOUT
+                        )
+                        
+                        # Extract image data
+                        for part in response.candidates[0].content.parts:
+                            if part.inline_data is not None:
+                                # Convert to base64
+                                image_bytes = part.inline_data.data
+                                base64_data = base64.b64encode(image_bytes).decode('utf-8')
+                                
+                                # Save to file as backup
+                                filename = f"outputs/images/generated_image_{int(time.time())}_{i}_{model_name.replace('-', '_')}.png"
+                                image = Image.open(BytesIO(image_bytes))
+                                image.save(filename)
+                                
+                                # Create image data object
+                                image_data = {
+                                    "id": f"image_{int(time.time())}_{i}",
+                                    "filename": filename,
+                                    "base64_data": base64_data,
+                                    "format": "png",
+                                    "size_bytes": len(image_bytes),
+                                    "prompt": prompt,
+                                    "model_used": model_name,
+                                    "model_priority": model_index + 1
+                                }
+                                
+                                image_data_list.append(image_data)
+                                logger.info(f"Image {i+1} generated successfully with {model_name} and saved to: {filename}")
+                                image_generated = True
+                                break
+                        
+                        if image_generated:
+                            break
+                            
+                    except Exception as e:
+                        logger.warning(f"Model {model_name} failed for image {i+1}: {e}")
+                        continue
+                
+                # If no image was generated with any model, create error entry
+                if not image_generated:
+                    error_data = {
+                        "id": f"error_image_{int(time.time())}_{i}",
+                        "filename": f"outputs/images/error_image_{int(time.time())}_{i}.txt",
+                        "base64_data": "",
+                        "format": "error",
+                        "size_bytes": 0,
+                        "prompt": prompt,
+                        "error": "All image generation models failed",
+                        "models_tried": FAST_IMAGE_MODELS
+                    }
+                    image_data_list.append(error_data)
+                    
+                    # Save error placeholder
+                    with open(error_data["filename"], 'w') as f:
+                        f.write(f"Image generation failed for prompt: {prompt}\n")
+                        f.write(f"All models tried: {', '.join(FAST_IMAGE_MODELS)}\n")
+                        f.write(f"Generated at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    
+                    logger.warning(f"Image {i+1} generation failed with all models")
+            
+            logger.info(f"Fast image generation completed. Generated {len([img for img in image_data_list if img.get('format') != 'error'])} successful images")
+            return image_data_list
+            
+        except Exception as e:
+            logger.error(f"Error in fast image generation: {e}")
+            return [{
+                "id": f"error_image_{int(time.time())}",
+                "filename": f"outputs/images/error_image_{int(time.time())}.txt",
+                "base64_data": "",
+                "format": "error",
+                "size_bytes": 0,
+                "prompt": prompt,
+                "error": str(e)
+            }]
     
     def process_api_output(self, api_output: APIOutput, generate_image: bool = True) -> Dict[str, Any]:
         """
@@ -252,8 +369,8 @@ class GeminiProcessor:
             if generate_image:
                 # Create a prompt based on the content for image generation
                 image_prompt = f"Create a visual representation of: {api_output.response[:100]}..."
-                image_data_list = self.generate_image(image_prompt, num_images=2)
-                logger.info("Successfully generated images")
+                image_data_list = self.generate_image_fast(image_prompt, num_images=1)
+                logger.info("Successfully generated image")
             
             # Step 4: Compile results
             results = {
@@ -300,8 +417,14 @@ async def root():
         "message": "Gemini Processor API",
         "version": "1.0.0",
         "endpoints": {
-            "/process": "POST - Process API output with Gemini",
+            "/process": "POST - Process API output with Gemini (generates 1 image)",
+            "/generate-image-fast": "POST - Fast single image generation only",
             "/health": "GET - Health check"
+        },
+        "image_config": {
+            "images_per_request": 1,
+            "fast_models": FAST_IMAGE_MODELS,
+            "image_timeout_seconds": IMAGE_TIMEOUT
         }
     }
 
@@ -373,6 +496,42 @@ async def process_simple(api_output: APIOutput):
         
     except Exception as e:
         logger.error(f"Error in simple processing: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/generate-image-fast")
+async def generate_single_image_fast(api_output: APIOutput):
+    """
+    Fast single image generation endpoint using the fastest available model
+    
+    Args:
+        api_output: The API output to base the image on
+        
+    Returns:
+        Single generated image with metadata
+    """
+    try:
+        logger.info(f"Generating single fast image for session: {api_output.session_id}")
+        
+        # Create a prompt based on the content for image generation
+        image_prompt = f"Create a visual representation of: {api_output.response[:100]}..."
+        
+        # Generate single image using fast method
+        image_data_list = processor.generate_image_fast(image_prompt, num_images=1)
+        
+        if image_data_list and image_data_list[0].get('format') != 'error':
+            return {
+                "session_id": api_output.session_id,
+                "image": image_data_list[0],
+                "processing_timestamp": time.time(),
+                "status": "success"
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Image generation failed with all models")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in fast image generation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
