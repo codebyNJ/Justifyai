@@ -35,18 +35,13 @@ app.add_middleware(
 
 # Configuration constants
 GEMINI_TIMEOUT = 120
-IMAGE_TIMEOUT = 60
+IMAGE_TIMEOUT = 300  # 5 minutes timeout for image generation
 MAX_RETRIES = 3
 RETRY_DELAY = 2
 BACKOFF_MULTIPLIER = 2
 
-# Fast image generation models
-FAST_IMAGE_MODELS = [
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
-    "gemini-2.0-flash-exp",
-    "gemini-2.5-flash-image-preview"
-]
+# Image generation model (using only the most reliable one)
+IMAGE_MODEL = "gemini-2.5-flash-image-preview"
 
 # Store for tracking request status
 request_store = {}
@@ -154,57 +149,84 @@ class GeminiProcessor:
 
     @retry_on_server_error()
     def generate_image_fast(self, prompt: str, num_images: int = 1) -> List[Dict[str, str]]:
-        """Generate images using faster Gemini models with fallback system"""
+        """
+        Generate images using gemini-2.5-flash-image-preview model only
+        
+        Args:
+            prompt: Text description for image generation
+            num_images: Number of images to generate
+            
+        Returns:
+            List of dictionaries containing image data and metadata
+        """
         try:
-            logger.info(f"Generating {num_images} image(s) with fast models, prompt: {prompt}")
+            logger.info(f"Generating {num_images} image(s) with {IMAGE_MODEL}, prompt: {prompt}")
             
             image_data_list = []
             for i in range(num_images):
-                image_generated = False
-                
-                for model_index, model_name in enumerate(FAST_IMAGE_MODELS):
-                    try:
-                        logger.info(f"Trying model {model_name} for image {i+1}/{num_images}...")
-                        
-                        response = self.client.models.generate_content(
-                            model=model_name,
-                            contents=[prompt],
-                            timeout=IMAGE_TIMEOUT
-                        )
-                        
-                        for part in response.candidates[0].content.parts:
-                            if part.inline_data is not None:
-                                image_bytes = part.inline_data.data
-                                base64_data = base64.b64encode(image_bytes).decode('utf-8')
-                                
-                                filename = f"outputs/images/generated_image_{int(time.time())}_{i}_{model_name.replace('-', '_')}.png"
-                                image = Image.open(BytesIO(image_bytes))
-                                image.save(filename)
-                                
-                                image_data = {
-                                    "id": f"image_{int(time.time())}_{i}",
-                                    "filename": filename,
-                                    "base64_data": base64_data,
-                                    "format": "png",
-                                    "size_bytes": len(image_bytes),
-                                    "prompt": prompt,
-                                    "model_used": model_name,
-                                    "model_priority": model_index + 1
-                                }
-                                
-                                image_data_list.append(image_data)
-                                logger.info(f"Image {i+1} generated successfully with {model_name}")
-                                image_generated = True
-                                break
-                        
-                        if image_generated:
-                            break
+                try:
+                    logger.info(f"Generating image {i+1}/{num_images} with {IMAGE_MODEL}...")
+                    
+                    # Generate image with the specified model
+                    response = self.client.models.generate_content(
+                        model=IMAGE_MODEL,
+                        contents=[prompt],
+                        timeout=IMAGE_TIMEOUT  # 5 minutes
+                    )
+                    
+                    # Extract image data
+                    image_found = False
+                    for part in response.candidates[0].content.parts:
+                        if part.inline_data is not None:
+                            # Convert to base64
+                            image_bytes = part.inline_data.data
+                            base64_data = base64.b64encode(image_bytes).decode('utf-8')
                             
-                    except Exception as e:
-                        logger.warning(f"Model {model_name} failed for image {i+1}: {e}")
-                        continue
-                
-                if not image_generated:
+                            # Save to file as backup
+                            filename = f"outputs/images/generated_image_{int(time.time())}_{i}.png"
+                            image = Image.open(BytesIO(image_bytes))
+                            image.save(filename)
+                            
+                            # Create image data object
+                            image_data = {
+                                "id": f"image_{int(time.time())}_{i}",
+                                "filename": filename,
+                                "base64_data": base64_data,
+                                "format": "png",
+                                "size_bytes": len(image_bytes),
+                                "prompt": prompt,
+                                "model_used": IMAGE_MODEL
+                            }
+                            
+                            image_data_list.append(image_data)
+                            logger.info(f"Image {i+1} generated successfully with {IMAGE_MODEL} and saved to: {filename}")
+                            image_found = True
+                            break
+                    
+                    # If no image was generated, create error entry
+                    if not image_found:
+                        error_data = {
+                            "id": f"error_image_{int(time.time())}_{i}",
+                            "filename": f"outputs/images/error_image_{int(time.time())}_{i}.txt",
+                            "base64_data": "",
+                            "format": "error",
+                            "size_bytes": 0,
+                            "prompt": prompt,
+                            "error": f"No image generated by {IMAGE_MODEL}",
+                            "model_used": IMAGE_MODEL
+                        }
+                        image_data_list.append(error_data)
+                        
+                        # Save error placeholder
+                        with open(error_data["filename"], 'w') as f:
+                            f.write(f"Image generation failed for prompt: {prompt}\n")
+                            f.write(f"Model used: {IMAGE_MODEL}\n")
+                            f.write(f"Generated at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        
+                        logger.warning(f"Image {i+1} generation failed with {IMAGE_MODEL}")
+                        
+                except Exception as e:
+                    logger.error(f"Error generating image {i}: {e}")
                     error_data = {
                         "id": f"error_image_{int(time.time())}_{i}",
                         "filename": f"outputs/images/error_image_{int(time.time())}_{i}.txt",
@@ -212,15 +234,23 @@ class GeminiProcessor:
                         "format": "error",
                         "size_bytes": 0,
                         "prompt": prompt,
-                        "error": "All image generation models failed",
-                        "models_tried": FAST_IMAGE_MODELS
+                        "error": str(e),
+                        "model_used": IMAGE_MODEL
                     }
                     image_data_list.append(error_data)
+                    
+                    # Save error details
+                    with open(error_data["filename"], 'w') as f:
+                        f.write(f"Image generation error: {str(e)}\n")
+                        f.write(f"Prompt: {prompt}\n")
+                        f.write(f"Model used: {IMAGE_MODEL}\n")
+                        f.write(f"Generated at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
             
+            logger.info(f"Image generation completed. Generated {len([img for img in image_data_list if img.get('format') != 'error'])} successful images")
             return image_data_list
             
         except Exception as e:
-            logger.error(f"Error in fast image generation: {e}")
+            logger.error(f"Error in image generation: {e}")
             return [{
                 "id": f"error_image_{int(time.time())}",
                 "filename": f"outputs/images/error_image_{int(time.time())}.txt",
@@ -228,7 +258,8 @@ class GeminiProcessor:
                 "format": "error",
                 "size_bytes": 0,
                 "prompt": prompt,
-                "error": str(e)
+                "error": str(e),
+                "model_used": IMAGE_MODEL
             }]
 
     async def process_formatted_content_async(self, api_output: APIOutput, request_id: str):
@@ -315,6 +346,11 @@ async def root():
             "/process-streaming": "POST - Stream formatted content first, then image",
             "/process-webhook": "POST - Send formatted content immediately, image via webhook",
             "/health": "GET - Health check"
+        },
+        "timeouts": {
+            "text_processing": f"{GEMINI_TIMEOUT}s",
+            "image_generation": f"{IMAGE_TIMEOUT}s (5 minutes)",
+            "image_model": IMAGE_MODEL
         }
     }
 
