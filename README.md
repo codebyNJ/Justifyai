@@ -306,11 +306,11 @@ This project is licensed under the **Apache License 2.0** - see the [LICENSE](LI
 
 ### **Star this repository if you find it helpful**
 
-[![GitHub stars](https://img.shields.io/github/stars/your-username/genexhange1?style=social)](https://github.com/your-username/genexhange1)
-[![GitHub forks](https://img.shields.io/github/forks/your-username/genexhange1?style=social)](https://github.com/your-username/genexhange1)
+[![GitHub stars](https://img.shields.io/github/stars/codebyNJ/jusitfyai?style=social)](https://github.com/codebyNJ/justifyai.git)
+[![GitHub forks](https://img.shields.io/github/forks/codebyNJ/justifyai?style=social)](https://github.com/codebyNJ/justifyai.git)
 
 **Made with dedication by the JustifyAI Team**
 
-[Website](https://your-website.com) • [Contact](mailto:contact@justifyai.com) • [Twitter](https://twitter.com/justifyai)
+[Contact](mailto:nijeesh10th@gmail.com) 
 
 </div>
